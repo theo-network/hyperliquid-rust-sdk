@@ -6,11 +6,12 @@ use crate::{
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use log::error;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     net::TcpStream,
     spawn,
     sync::{mpsc::UnboundedSender, Mutex},
+    time,
 };
 use tokio_tungstenite::{
     connect_async,
@@ -26,7 +27,7 @@ struct SubscriptionData {
     subscription_id: u32,
 }
 pub(crate) struct WsManager {
-    writer: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, protocol::Message>,
+    writer: Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, protocol::Message>>>,
     subscriptions: Arc<Mutex<HashMap<String, Vec<SubscriptionData>>>>,
     subscription_id: u32,
     subscription_identifiers: HashMap<u32, String>,
@@ -57,6 +58,7 @@ pub enum Message {
     Candle(Candle),
     SubscriptionResponse,
     OrderUpdates(OrderUpdates),
+    Pong,
 }
 
 #[derive(Serialize)]
@@ -65,13 +67,22 @@ pub(crate) struct SubscriptionSendData<'a> {
     subscription: &'a serde_json::Value,
 }
 
+#[derive(Serialize)]
+pub(crate) struct Ping {
+    method: &'static str,
+}
+
 impl WsManager {
+    const SEND_PING_INTERVAL: u64 = 50;
+
     pub(crate) async fn new(url: String) -> Result<WsManager> {
         let (ws_stream, _) = connect_async(url.clone())
             .await
             .map_err(|e| Error::Websocket(e.to_string()))?;
 
         let (writer, mut reader) = ws_stream.split();
+        let writer = Arc::new(Mutex::new(writer));
+        let writer_copy = Arc::clone(&writer);
 
         let subscriptions_map: HashMap<String, Vec<SubscriptionData>> = HashMap::new();
         let subscriptions = Arc::new(Mutex::new(subscriptions_map));
@@ -87,6 +98,22 @@ impl WsManager {
             }
         };
         spawn(reader_fut);
+
+        let ping_fut = async move {
+            loop {
+                match serde_json::to_string(&Ping { method: "ping" }) {
+                    Ok(payload) => {
+                        let mut writer = writer_copy.lock().await;
+                        if let Err(err) = writer.send(protocol::Message::Text(payload)).await {
+                            error!("Error pinging server: {err}")
+                        }
+                    }
+                    Err(err) => error!("Error serializing ping message: {err}"),
+                }
+                time::sleep(Duration::from_secs(Self::SEND_PING_INTERVAL)).await;
+            }
+        };
+        spawn(ping_fut);
 
         Ok(WsManager {
             writer,
@@ -122,7 +149,7 @@ impl WsManager {
             })
             .map_err(|e| Error::JsonParse(e.to_string())),
             Message::OrderUpdates(_) => Ok("orderUpdates".to_string()),
-            Message::SubscriptionResponse => Ok(String::default()),
+            Message::SubscriptionResponse | Message::Pong => Ok(String::default()),
         }
     }
 
@@ -197,7 +224,8 @@ impl WsManager {
             })
             .map_err(|e| Error::JsonParse(e.to_string()))?;
 
-            self.writer
+            let mut writer = self.writer.lock().await;
+            writer
                 .send(protocol::Message::Text(payload))
                 .await
                 .map_err(|e| Error::Websocket(e.to_string()))?;
@@ -257,7 +285,8 @@ impl WsManager {
             })
             .map_err(|e| Error::JsonParse(e.to_string()))?;
 
-            self.writer
+            let mut writer = self.writer.lock().await;
+            writer
                 .send(protocol::Message::Text(payload))
                 .await
                 .map_err(|e| Error::Websocket(e.to_string()))?;
