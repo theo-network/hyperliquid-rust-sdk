@@ -134,6 +134,9 @@ pub enum LedgerUpdate {
     VaultDistribution(VaultDelta),
     VaultWithdraw(VaultWithdraw),
     VaultLeaderCommission(VaultLeaderCommission),
+    AccountClassTransfer(AccountClassTransfer),
+    SpotTransfer(SpotTransfer),
+    SpotGenesis(SpotGenesis),
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -199,4 +202,28 @@ pub struct VaultWithdraw {
 pub struct VaultLeaderCommission {
     pub user: H160,
     pub usdc: String,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountClassTransfer {
+    pub usdc: String,
+    pub to_perp: bool,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotTransfer {
+    pub token: String,
+    pub amount: String,
+    pub usdc_value: String,
+    pub user: H160,
+    pub destination: H160,
+    pub fee: String,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct SpotGenesis {
+    pub token: String,
+    pub amount: String,
 }

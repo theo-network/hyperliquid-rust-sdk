@@ -153,8 +153,11 @@ impl WsManager {
             })
             .map_err(|e| Error::JsonParse(e.to_string())),
             Message::OrderUpdates(_) => Ok("orderUpdates".to_string()),
-            Message::UserNonFundingLedgerUpdates(_) => {
-                Ok("userNonFundingLedgerUpdates".to_string())
+            Message::UserNonFundingLedgerUpdates(user_non_funding_ledger_updates) => {
+                serde_json::to_string(&Subscription::UserNonFundingLedgerUpdates {
+                    user: user_non_funding_ledger_updates.data.user,
+                })
+                .map_err(|e| Error::JsonParse(e.to_string()))
             }
             Message::SubscriptionResponse | Message::Pong => Ok(String::default()),
         }
