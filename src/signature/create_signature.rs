@@ -17,6 +17,8 @@ use crate::{
     Error,
 };
 
+use super::bridge;
+
 pub(crate) fn keccak(x: impl AbiEncode) -> H256 {
     keccak256(x.encode()).into()
 }
@@ -32,6 +34,34 @@ pub(crate) fn sign_l1_action(
         if is_mainnet { "a" } else { "b" },
         connection_id,
     )
+}
+
+pub(crate) fn sign_withdraw_from_bridge_action(
+    wallet: &LocalWallet,
+    chain_type: EthChain,
+    usd: &str,
+    destination: &str,
+    timestamp: u64,
+) -> Result<Signature> {
+    match chain_type {
+        EthChain::Localhost => Err(Error::ChainNotAllowed),
+        EthChain::Arbitrum => Ok(sign_typed_data(
+            &bridge::mainnet::WithdrawFromBridge2SignPayload {
+                destination: destination.to_string(),
+                usd: usd.to_string(),
+                time: timestamp,
+            },
+            wallet,
+        )?),
+        EthChain::ArbitrumGoerli => Ok(sign_typed_data(
+            &bridge::testnet::WithdrawFromBridge2SignPayload {
+                destination: destination.to_string(),
+                usd: usd.to_string(),
+                time: timestamp,
+            },
+            wallet,
+        )?),
+    }
 }
 
 pub(crate) fn sign_usd_transfer_action(

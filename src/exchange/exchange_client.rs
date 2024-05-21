@@ -13,10 +13,11 @@ use crate::{
     prelude::*,
     req::HttpClient,
     signature::{
-        agent::mainnet::Agent, keccak, sign_l1_action, sign_usd_transfer_action, sign_with_agent,
-        usdc_transfer::mainnet::UsdTransferSignPayload,
+        agent::mainnet::Agent, bridge::mainnet::WithdrawFromBridge2SignPayload, keccak,
+        sign_l1_action, sign_usd_transfer_action, sign_with_agent,
+        sign_withdraw_from_bridge_action, usdc_transfer::mainnet::UsdTransferSignPayload,
     },
-    BaseUrl, BulkCancelCloid, Error, ExchangeResponseStatus,
+    BaseUrl, BulkCancelCloid, Error, ExchangeResponseStatus, Withdraw2,
 };
 use ethers::{
     abi::AbiEncode,
@@ -57,6 +58,7 @@ pub enum Actions {
     Cancel(BulkCancel),
     CancelByCloid(BulkCancelCloid),
     Connect(AgentConnect),
+    Withdraw2(Withdraw2),
 }
 
 impl Actions {
@@ -360,6 +362,37 @@ impl ExchangeClient {
         let signature = sign_with_agent(wallet, chain, &source, connection_id)?;
         let timestamp = next_nonce();
         Ok((key, self.post(action, signature, timestamp).await?))
+    }
+
+    pub async fn withdraw_from_bridge(
+        &self,
+        usd: &str,
+        destination: &str,
+        wallet: Option<&LocalWallet>,
+    ) -> Result<ExchangeResponseStatus> {
+        let wallet = wallet.unwrap_or(&self.wallet);
+        let (chain, l1_name) = if self.http_client.base_url.eq(MAINNET_API_URL) {
+            (EthChain::Arbitrum, "Arbitrum".to_string())
+        } else {
+            (EthChain::ArbitrumGoerli, "ArbitrumGoerli".to_string())
+        };
+
+        let timestamp = next_nonce();
+        let payload = serde_json::to_value(WithdrawFromBridge2SignPayload {
+            destination: destination.to_string(),
+            usd: usd.to_string(),
+            time: timestamp,
+        })
+        .map_err(|e| Error::JsonParse(e.to_string()))?;
+        let action = serde_json::to_value(Actions::Withdraw2(Withdraw2 {
+            chain: l1_name,
+            payload,
+        }))
+        .map_err(|e| Error::JsonParse(e.to_string()))?;
+
+        let signature =
+            sign_withdraw_from_bridge_action(wallet, chain, usd, destination, timestamp)?;
+        self.post(action, signature, timestamp).await
     }
 }
 
