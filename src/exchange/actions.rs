@@ -55,3 +55,10 @@ pub struct AgentConnect {
     pub agent: Agent,
     pub agent_address: H160,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Withdraw2 {
+    pub chain: String,
+    pub payload: serde_json::Value,
+}
