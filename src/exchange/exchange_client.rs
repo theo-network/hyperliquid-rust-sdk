@@ -1,29 +1,27 @@
+use crate::signature::sign_typed_data;
 use crate::{
     consts::MAINNET_API_URL,
     exchange::{
         actions::{
-            AgentConnect, BulkCancel, BulkOrder, UpdateIsolatedMargin, UpdateLeverage, UsdcTransfer,
+            ApproveAgent, BulkCancel, BulkOrder, UpdateIsolatedMargin, UpdateLeverage, UsdSend,
         },
         cancel::{CancelRequest, CancelRequestCloid},
         ClientCancelRequest, ClientOrderRequest,
     },
-    helpers::{generate_random_key, next_nonce, uuid_to_hex_string, EthChain},
+    helpers::{generate_random_key, next_nonce, uuid_to_hex_string},
     info::info_client::InfoClient,
     meta::Meta,
     prelude::*,
     req::HttpClient,
-    signature::{
-        agent::mainnet::Agent, bridge::mainnet::WithdrawFromBridge2SignPayload, keccak,
-        sign_l1_action, sign_usd_transfer_action, sign_with_agent,
-        sign_withdraw_from_bridge_action, usdc_transfer::mainnet::UsdTransferSignPayload,
-    },
-    BaseUrl, BulkCancelCloid, Error, ExchangeResponseStatus, Withdraw2,
+    signature::sign_l1_action,
+    BaseUrl, BulkCancelCloid, Error, ExchangeResponseStatus, Withdraw3,
 };
 use ethers::{
     abi::AbiEncode,
     signers::{LocalWallet, Signer},
     types::{Signature, H160, H256},
 };
+use log::debug;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -51,14 +49,14 @@ struct ExchangePayload {
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 pub enum Actions {
-    UsdTransfer(UsdcTransfer),
+    UsdSend(UsdSend),
     UpdateLeverage(UpdateLeverage),
     UpdateIsolatedMargin(UpdateIsolatedMargin),
     Order(BulkOrder),
     Cancel(BulkCancel),
     CancelByCloid(BulkCancelCloid),
-    Connect(AgentConnect),
-    Withdraw2(Withdraw2),
+    ApproveAgent(ApproveAgent),
+    Withdraw3(Withdraw3),
 }
 
 impl Actions {
@@ -125,6 +123,7 @@ impl ExchangeClient {
         };
         let res = serde_json::to_string(&exchange_payload)
             .map_err(|e| Error::JsonParse(e.to_string()))?;
+        debug!("Sending request {res:?}");
 
         serde_json::from_str(
             &self
@@ -143,26 +142,24 @@ impl ExchangeClient {
         wallet: Option<&LocalWallet>,
     ) -> Result<ExchangeResponseStatus> {
         let wallet = wallet.unwrap_or(&self.wallet);
-        let (chain, l1_name) = if self.http_client.base_url.eq(MAINNET_API_URL) {
-            (EthChain::Arbitrum, "Arbitrum".to_string())
+        let hyperliquid_chain = if self.http_client.base_url.eq(MAINNET_API_URL) {
+            "Mainnet".to_string()
         } else {
-            (EthChain::ArbitrumGoerli, "ArbitrumGoerli".to_string())
+            "Testnet".to_string()
         };
 
         let timestamp = next_nonce();
-        let payload = serde_json::to_value(UsdTransferSignPayload {
+        let usd_send = UsdSend {
+            signature_chain_id: 421614.into(),
+            hyperliquid_chain,
             destination: destination.to_string(),
             amount: amount.to_string(),
             time: timestamp,
-        })
-        .map_err(|e| Error::JsonParse(e.to_string()))?;
-        let action = serde_json::to_value(Actions::UsdTransfer(UsdcTransfer {
-            chain: l1_name,
-            payload,
-        }))
-        .map_err(|e| Error::JsonParse(e.to_string()))?;
+        };
+        let signature = sign_typed_data(&usd_send, wallet)?;
+        let action = serde_json::to_value(Actions::UsdSend(usd_send))
+            .map_err(|e| Error::JsonParse(e.to_string()))?;
 
-        let signature = sign_usd_transfer_action(wallet, chain, amount, destination, timestamp)?;
         self.post(action, signature, timestamp).await
     }
 
@@ -341,57 +338,52 @@ impl ExchangeClient {
             .parse::<LocalWallet>()
             .map_err(|e| Error::PrivateKeyParse(e.to_string()))?
             .address();
-        let connection_id = keccak(address);
 
-        let (chain, l1_name) = if self.http_client.base_url.eq(MAINNET_API_URL) {
-            (EthChain::Arbitrum, "Arbitrum".to_string())
+        let hyperliquid_chain = if self.http_client.base_url.eq(MAINNET_API_URL) {
+            "Mainnet".to_string()
         } else {
-            (EthChain::ArbitrumGoerli, "ArbitrumGoerli".to_string())
+            "Testnet".to_string()
         };
 
-        let source = "https://hyperliquid.xyz".to_string();
-        let action = serde_json::to_value(Actions::Connect(AgentConnect {
-            chain: l1_name,
-            agent: Agent {
-                source: source.clone(),
-                connection_id,
-            },
+        let nonce = next_nonce();
+        let approve_agent = ApproveAgent {
+            signature_chain_id: 421614.into(),
+            hyperliquid_chain,
             agent_address: address,
-        }))
-        .map_err(|e| Error::JsonParse(e.to_string()))?;
-        let signature = sign_with_agent(wallet, chain, &source, connection_id)?;
-        let timestamp = next_nonce();
-        Ok((key, self.post(action, signature, timestamp).await?))
+            agent_name: None,
+            nonce,
+        };
+        let signature = sign_typed_data(&approve_agent, wallet)?;
+        let action = serde_json::to_value(Actions::ApproveAgent(approve_agent))
+            .map_err(|e| Error::JsonParse(e.to_string()))?;
+        Ok((key, self.post(action, signature, nonce).await?))
     }
 
     pub async fn withdraw_from_bridge(
         &self,
-        usd: &str,
+        amount: &str,
         destination: &str,
         wallet: Option<&LocalWallet>,
     ) -> Result<ExchangeResponseStatus> {
         let wallet = wallet.unwrap_or(&self.wallet);
-        let (chain, l1_name) = if self.http_client.base_url.eq(MAINNET_API_URL) {
-            (EthChain::Arbitrum, "Arbitrum".to_string())
+        let hyperliquid_chain = if self.http_client.base_url.eq(MAINNET_API_URL) {
+            "Mainnet".to_string()
         } else {
-            (EthChain::ArbitrumGoerli, "ArbitrumGoerli".to_string())
+            "Testnet".to_string()
         };
 
         let timestamp = next_nonce();
-        let payload = serde_json::to_value(WithdrawFromBridge2SignPayload {
+        let withdraw = Withdraw3 {
+            signature_chain_id: 421614.into(),
+            hyperliquid_chain,
             destination: destination.to_string(),
-            usd: usd.to_string(),
+            amount: amount.to_string(),
             time: timestamp,
-        })
-        .map_err(|e| Error::JsonParse(e.to_string()))?;
-        let action = serde_json::to_value(Actions::Withdraw2(Withdraw2 {
-            chain: l1_name,
-            payload,
-        }))
-        .map_err(|e| Error::JsonParse(e.to_string()))?;
+        };
+        let signature = sign_typed_data(&withdraw, wallet)?;
+        let action = serde_json::to_value(Actions::Withdraw3(withdraw))
+            .map_err(|e| Error::JsonParse(e.to_string()))?;
 
-        let signature =
-            sign_withdraw_from_bridge_action(wallet, chain, usd, destination, timestamp)?;
         self.post(action, signature, timestamp).await
     }
 }

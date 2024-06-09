@@ -1,7 +1,7 @@
 use crate::{
     info::{
-        CandlesSnapshotResponse, FundingHistoryResponse, L2SnapshotResponse, OpenOrdersResponse,
-        RecentTradesResponse, UserFillsResponse, UserStateResponse, MetaAndAssetContexts
+        CandlesSnapshotResponse, FundingHistoryResponse, L2SnapshotResponse, MetaAndAssetContexts,
+        OpenOrdersResponse, RecentTradesResponse, UserFillsResponse, UserStateResponse,
     },
     meta::Meta,
     prelude::*,

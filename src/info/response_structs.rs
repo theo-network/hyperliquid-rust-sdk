@@ -1,4 +1,7 @@
-use crate::{info::{AssetPosition, Level, MarginSummary},meta::Meta};
+use crate::{
+    info::{AssetPosition, Level, MarginSummary},
+    meta::Meta,
+};
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]

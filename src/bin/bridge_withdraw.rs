@@ -6,16 +6,16 @@ use log::info;
 async fn main() {
     env_logger::init();
     // Key was randomly generated for testing and shouldn't be used with any real funds
-    let wallet: LocalWallet = "e908f86dbb4d55ac876378565aafeabc187f6690f046459397b17d9b9a19688e"
+    let wallet: LocalWallet = "6a8ecb51ace4f8fac7a5329ad0278e1278f54202365b0a637b97916e3304762a"
         .parse()
         .unwrap();
 
-    let exchange_client = ExchangeClient::new(None, wallet, Some(BaseUrl::Testnet), None, None)
+    let exchange_client = ExchangeClient::new(None, wallet, Some(BaseUrl::Mainnet), None, None)
         .await
         .unwrap();
 
-    let usd = "5"; // 5 USD
-    let destination = "0x0D1d9635D0640821d15e323ac8AdADfA9c111414";
+    let usd = "2"; // 5 USD
+    let destination = "0x9918083A1564A7ec41ceDEAbFDc1Ce96a402970b";
 
     let res = exchange_client
         .withdraw_from_bridge(usd, destination, None)
